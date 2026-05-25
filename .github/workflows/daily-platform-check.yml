@@ -29,20 +29,12 @@ jobs:
         run: npx playwright test
         continue-on-error: true
 
-      - name: Upload artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failure-artifacts
-          path: test-results/**
-          retention-days: 14
-          
       - name: Create GitHub Issue on failure
         if: failure()
         run: |
           gh issue create \
-            --title "Platform Check Failed" \
-            --body "**Ein Plattform-Check ist fehlgeschlagen.**\n\n**Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n**Artifacts:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts\n\nBitte prüfen und ggf. anpassen." \
+            --title "❌ Platform Check Failed" \
+            --body "**Ein Plattform-Check ist fehlgeschlagen.**\n\n**Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n**Artifacts (Screenshots):** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts\n\nBitte analysieren und ggf. Selectors anpassen." \
             --label "platform-check-failure"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
