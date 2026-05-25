@@ -29,6 +29,14 @@ jobs:
         run: npx playwright test
         continue-on-error: true
 
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-artifacts
+          path: test-results/**
+          retention-days: 14
+
       - name: Create GitHub Issue on failure
         if: failure()
         run: |
