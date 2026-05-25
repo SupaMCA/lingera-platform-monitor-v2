@@ -34,5 +34,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: failure-artifacts
-          path: test-results/
+          path: test-results/**
           retention-days: 14
