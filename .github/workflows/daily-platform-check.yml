@@ -30,7 +30,6 @@ jobs:
 
       - name: Run platform checks
         run: npx playwright test
-        # continue-on-error wurde entfernt, damit bei Fehlern die nachfolgenden Schritte laufen
 
       - name: Upload artifacts on failure
         if: failure()
@@ -42,10 +41,20 @@ jobs:
 
       - name: Create GitHub Issue on failure
         if: failure()
+        shell: bash
         run: |
+          cat > /tmp/issue_body.md << 'EOF'
+          **❌ Ein Plattform-Check ist fehlgeschlagen.**
+
+          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          **Artifacts (Screenshots):** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
+
+          Bitte prüfen und ggf. Selectors oder Tests anpassen.
+          EOF
+
           gh issue create \
             --title "❌ Platform Check Failed" \
-            --body "**Ein Plattform-Check ist fehlgeschlagen.**\n\n**Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\n**Artifacts (Screenshots):** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts\n\nBitte analysieren und ggf. Selectors anpassen." \
+            --body-file /tmp/issue_body.md \
             --label "platform-check-failure"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
