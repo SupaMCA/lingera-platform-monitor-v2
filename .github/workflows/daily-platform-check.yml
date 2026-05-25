@@ -27,7 +27,7 @@ jobs:
 
       - name: Run platform checks
         run: npx playwright test
-        continue-on-error: true
+        # continue-on-error wurde entfernt, damit bei Fehlern die nachfolgenden Schritte laufen
 
       - name: Upload artifacts on failure
         if: failure()
