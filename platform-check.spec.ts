@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Platform Health Checks', () => {
 
   test('ChatGPT - basic load check', async ({ page }) => {
-    await page.goto('https://chatgpt.com');
+    await page.goto('https://chatgpt.com/this-page-does-not-exist-123456');
     await page.waitForLoadState('domcontentloaded');
 
     try {
