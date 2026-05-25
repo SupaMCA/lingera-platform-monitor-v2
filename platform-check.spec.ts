@@ -28,4 +28,17 @@ test.describe('Platform Health Checks', () => {
     }
   });
 
+  test('Grok - basic load check', async ({ page }) => {
+    await page.goto('https://grok.x.ai');
+    await page.waitForLoadState('domcontentloaded');
+
+    try {
+      await expect(page.locator('body')).toBeVisible({ timeout: 15000 });
+      console.log('✅ Grok: Seite erfolgreich geladen');
+    } catch (error) {
+      await page.screenshot({ path: `test-results/grok-failure.png`, fullPage: true });
+      throw error;
+    }
+  });
+
 });
