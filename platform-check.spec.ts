@@ -41,4 +41,17 @@ test.describe('Platform Health Checks', () => {
     }
   });
 
+  test('Gemini - basic load check', async ({ page }) => {
+    await page.goto('https://gemini.google.com');
+    await page.waitForLoadState('domcontentloaded');
+
+    try {
+      await expect(page.locator('body')).toBeVisible({ timeout: 15000 });
+      console.log('✅ Gemini: Seite erfolgreich geladen');
+    } catch (error) {
+      await page.screenshot({ path: `test-results/gemini-failure.png`, fullPage: true });
+      throw error;
+    }
+  });
+
 });
