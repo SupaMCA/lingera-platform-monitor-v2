@@ -8,6 +8,9 @@ on:
 jobs:
   check-platforms:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
