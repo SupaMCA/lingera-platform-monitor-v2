@@ -8,9 +8,6 @@ on:
 jobs:
   check-platforms:
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,22 +36,22 @@ jobs:
           path: test-results/**
           retention-days: 14
 
-      - name: Create GitHub Issue on failure
+      - name: Notify Abacus Monitor on failure
         if: failure()
-        shell: bash
+        env:
+          MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
         run: |
-          cat > /tmp/issue_body.md << 'EOF'
-          **❌ Ein Plattform-Check ist fehlgeschlagen.**
-
-          **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          **Artifacts (Screenshots):** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
-
-          Bitte prüfen und ggf. Selectors oder Tests anpassen.
+          curl -s -X POST "$MONITOR_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @- <<EOF
+          {
+            "platform": "multiple",
+            "error_message": "One or more platform checks failed. See workflow logs and artifacts for details.",
+            "error_category": "unknown",
+            "screenshot_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
           EOF
 
-          gh issue create \
-            --title "❌ Platform Check Failed" \
-            --body-file /tmp/issue_body.md \
-            --label "platform-check-failure"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "📤 Abacus Monitor alert sent"
