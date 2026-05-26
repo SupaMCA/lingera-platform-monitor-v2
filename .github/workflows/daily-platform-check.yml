@@ -41,17 +41,30 @@ jobs:
         env:
           MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
         run: |
+          # Simple error categorization based on common patterns
+          if echo "$GITHUB_STEP_SUMMARY" | grep -qiE "timeout|exceeded"; then
+            CATEGORY="timeout"
+          elif echo "$GITHUB_STEP_SUMMARY" | grep -qiE "selector|locator|not.?found"; then
+            CATEGORY="selector_not_found"
+          elif echo "$GITHUB_STEP_SUMMARY" | grep -qiE "net::ERR|ECONNREFUSED|network"; then
+            CATEGORY="network_error"
+          elif echo "$GITHUB_STEP_SUMMARY" | grep -qiE "login|sign.?in|auth"; then
+            CATEGORY="login_wall"
+          else
+            CATEGORY="unknown"
+          fi
+
           curl -s -X POST "$MONITOR_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d @- <<EOF
           {
             "platform": "multiple",
             "error_message": "One or more platform checks failed. See workflow logs and artifacts for details.",
-            "error_category": "unknown",
+            "error_category": "$CATEGORY",
             "screenshot_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
 
-          echo "📤 Abacus Monitor alert sent"
+          echo "📤 Abacus Monitor alert sent (category: $CATEGORY)"
