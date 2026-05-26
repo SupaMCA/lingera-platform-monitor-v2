@@ -7,7 +7,7 @@ test.describe('Platform Health Checks', () => {
     await page.waitForLoadState('domcontentloaded');
 
     try {
-      await expect(page.locator('body')).toBeVisible({ timeout: 15000 });
+      await expect(page.locator('non-existing-element-xyz-123')).toBeVisible({ timeout: 5000 });
       console.log('✅ ChatGPT: Seite erfolgreich geladen');
     } catch (error) {
       await page.screenshot({ path: `test-results/chatgpt-failure.png`, fullPage: true });
