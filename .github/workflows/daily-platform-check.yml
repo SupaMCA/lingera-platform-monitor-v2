@@ -41,14 +41,18 @@ jobs:
         env:
           MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
         run: |
-          # Simple error categorization based on common patterns
-          if echo "$GITHUB_STEP_SUMMARY" | grep -qiE "timeout|exceeded"; then
+          # ============================================
+          # Improved Error Categorization
+          # ============================================
+          ERROR_LOG=$(cat $GITHUB_STEP_SUMMARY 2>/dev/null || echo "")
+
+          if echo "$ERROR_LOG" | grep -qiE "timeout|exceeded"; then
             CATEGORY="timeout"
-          elif echo "$GITHUB_STEP_SUMMARY" | grep -qiE "selector|locator|not.?found"; then
+          elif echo "$ERROR_LOG" | grep -qiE "selector|locator|not found|unable to locate"; then
             CATEGORY="selector_not_found"
-          elif echo "$GITHUB_STEP_SUMMARY" | grep -qiE "net::ERR|ECONNREFUSED|network"; then
+          elif echo "$ERROR_LOG" | grep -qiE "net::ERR|ECONNREFUSED|network|connection refused"; then
             CATEGORY="network_error"
-          elif echo "$GITHUB_STEP_SUMMARY" | grep -qiE "login|sign.?in|auth"; then
+          elif echo "$ERROR_LOG" | grep -qiE "login|sign.?in|auth|redirect.*login"; then
             CATEGORY="login_wall"
           else
             CATEGORY="unknown"
@@ -59,7 +63,7 @@ jobs:
             -d @- <<EOF
           {
             "platform": "multiple",
-            "error_message": "One or more platform checks failed. See workflow logs and artifacts for details.",
+            "error_message": "One or more platform checks failed. Check workflow logs and artifacts for details.",
             "error_category": "$CATEGORY",
             "screenshot_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
