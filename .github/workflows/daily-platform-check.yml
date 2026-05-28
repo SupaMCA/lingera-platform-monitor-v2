@@ -1,3 +1,51 @@
+name: Daily Platform Health Check
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-platforms:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run platform checks
+        id: test
+        continue-on-error: true
+        run: |
+          set +e
+          OUTPUT=$(npx playwright test 2>&1)
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+          echo "error_output<<EOF" >> $GITHUB_OUTPUT
+          echo "$OUTPUT" | tail -30 >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          exit $EXIT_CODE
+
+      - name: Upload artifacts on failure
+        if: steps.test.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-artifacts
+          path: test-results/**
+          retention-days: 14
+
       - name: Notify Abacus Monitor on failure
         if: steps.test.outcome == 'failure'
         env:
@@ -8,10 +56,10 @@
           # Improved Error Extraction & Categorization
           # ============================================
 
-          # Extract the most relevant part of the error (last 20 lines, cleaned)
+          # Clean and limit the error message (last 20 lines, cleaned)
           CLEAN_ERROR=$(echo "$ERROR_OUTPUT" | tail -20 | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 900)
 
-          # Error Categorization
+          # Error Categorization based on real Playwright output
           if echo "$ERROR_OUTPUT" | grep -qiE "timeout|exceeded"; then
             CATEGORY="timeout"
           elif echo "$ERROR_OUTPUT" | grep -qiE "selector|locator.*not found|unable to locate"; then
