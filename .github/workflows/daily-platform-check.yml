@@ -1,58 +1,24 @@
-name: Daily Platform Health Check
-
-on:
-  schedule:
-    - cron: '0 9 * * *'
-  workflow_dispatch:
-
-jobs:
-  check-platforms:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-
-      - name: Run platform checks
-        run: npx playwright test
-
-      - name: Upload artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failure-artifacts
-          path: test-results/**
-          retention-days: 14
-
       - name: Notify Abacus Monitor on failure
-        if: failure()
+        if: steps.test.outcome == 'failure'
         env:
           MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
+          ERROR_OUTPUT: ${{ steps.test.outputs.error_output }}
         run: |
           # ============================================
-          # Improved Error Categorization
+          # Improved Error Extraction & Categorization
           # ============================================
-          ERROR_LOG=$(cat $GITHUB_STEP_SUMMARY 2>/dev/null || echo "")
 
-          if echo "$ERROR_LOG" | grep -qiE "timeout|exceeded"; then
+          # Extract the most relevant part of the error (last 20 lines, cleaned)
+          CLEAN_ERROR=$(echo "$ERROR_OUTPUT" | tail -20 | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 900)
+
+          # Error Categorization
+          if echo "$ERROR_OUTPUT" | grep -qiE "timeout|exceeded"; then
             CATEGORY="timeout"
-          elif echo "$ERROR_LOG" | grep -qiE "selector|locator|not found|unable to locate"; then
+          elif echo "$ERROR_OUTPUT" | grep -qiE "selector|locator.*not found|unable to locate"; then
             CATEGORY="selector_not_found"
-          elif echo "$ERROR_LOG" | grep -qiE "net::ERR|ECONNREFUSED|network|connection refused"; then
+          elif echo "$ERROR_OUTPUT" | grep -qiE "net::ERR|ECONNREFUSED|network|connection refused"; then
             CATEGORY="network_error"
-          elif echo "$ERROR_LOG" | grep -qiE "login|sign.?in|auth|redirect.*login"; then
+          elif echo "$ERROR_OUTPUT" | grep -qiE "login|sign.?in|auth|redirect.*login"; then
             CATEGORY="login_wall"
           else
             CATEGORY="unknown"
@@ -63,7 +29,7 @@ jobs:
             -d @- <<EOF
           {
             "platform": "multiple",
-            "error_message": "One or more platform checks failed. Check workflow logs and artifacts for details.",
+            "error_message": "$CLEAN_ERROR",
             "error_category": "$CATEGORY",
             "screenshot_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
