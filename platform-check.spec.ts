@@ -15,11 +15,13 @@ test.describe('Platform Health Checks', () => {
     test(`${platform.name} - basic load check`, async ({ page }) => {
       console.log(`🚀 Checking ${platform.name}...`);
 
+      // Navigate with generous timeout
       await page.goto(platform.url, { 
         waitUntil: 'domcontentloaded',
         timeout: 30000 
       });
 
+      // Wait for network to settle
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
       const selectors = getPlatformSelectors(platform.name);
@@ -28,45 +30,75 @@ test.describe('Platform Health Checks', () => {
       for (const selector of selectors) {
         try {
           await expect(page.locator(selector)).toBeVisible({ timeout: 12000 });
-          console.log(`✅ ${platform.name}: OK with "${selector}"`);
+          console.log(`✅ ${platform.name}: OK with selector "${selector}"`);
           success = true;
           break;
         } catch (e) {
-          // continue with next selector
+          // Try next selector
         }
       }
 
       if (!success) {
         console.error(`❌ ${platform.name} failed all selectors`);
-        // Safe screenshot with error handling
+        
+        // Safe screenshot
         try {
           await page.screenshot({ 
             path: `test-results/${platform.name.toLowerCase()}-failure.png`, 
             fullPage: true 
           });
         } catch (screenshotError) {
-          console.warn(`⚠️ Screenshot failed for ${platform.name}: ${screenshotError.message}`);
+          console.warn(`⚠️ Screenshot failed for ${platform.name}`);
         }
+
         throw new Error(`${platform.name} check failed`);
       }
     });
   }
 });
 
+// Robust selectors per platform
 function getPlatformSelectors(platform: string): string[] {
   switch (platform) {
     case 'ChatGPT':
-      return ['textarea[data-id="root"]', 'main', '[data-message-author-role]', 'nav[aria-label="Chat history"]'];
+      return [
+        'textarea[data-id="root"]',
+        'main',
+        '[data-message-author-role]',
+        '[data-testid^="conversation-turn"]',
+        'nav[aria-label="Chat history"]'
+      ];
     case 'Claude':
-      return ['div[contenteditable="true"]', 'article[data-testid="conversation-turn"]'];
+      return [
+        'div[contenteditable="true"]',
+        'article[data-testid="conversation-turn"]',
+        '[data-testid="chat-title-button"]'
+      ];
     case 'Grok':
-      return ['textarea[placeholder]', 'main'];
+      return [
+        'textarea[placeholder]',
+        'main',
+        '[data-testid*="message"]'
+      ];
     case 'Gemini':
-      return ['rich-textarea', 'ms-prompt-input-wrapper', 'main'];
+      return [
+        'rich-textarea',
+        'ms-prompt-input-wrapper',
+        'main'
+      ];
     case 'Perplexity':
-      return ['textarea[placeholder]', 'main'];
+      return [
+        'textarea[placeholder]',
+        '[class*="ThreadTitle"]',
+        'main'
+      ];
     case 'DeepSeek':
-      return ['textarea#chat-input', 'textarea[placeholder]', 'main'];
+      return [
+        'textarea#chat-input',
+        'textarea[placeholder]',
+        '.ds-markdown',
+        'main'
+      ];
     default:
       return ['main', 'body'];
   }
