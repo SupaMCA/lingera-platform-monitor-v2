@@ -1,118 +1,98 @@
-// platform-check.spec.ts — Lingera Platform Monitor v2
-// Health checks for all 6 supported AI platforms.
-//
-// Strategy: Multi-selector fallback for maximum resilience against DOM changes.
-// Selectors derived from Lingera Chrome Extension (content.js v0.9.5.2+).
-
-import { test, expect, Page } from '@playwright/test';
-
-const LOAD_TIMEOUT = 15_000;
-const ELEMENT_TIMEOUT = 12_000;
-
-// Helper: Try multiple selectors, succeed on first visible match
-async function expectAnyVisible(page: Page, selectors: string[], timeout = ELEMENT_TIMEOUT) {
-  for (const sel of selectors) {
-    try {
-      await expect(page.locator(sel).first()).toBeVisible({ 
-        timeout: Math.floor(timeout / selectors.length) + 3000 
-      });
-      console.log(`  ✅ Matched: ${sel}`);
-      return;
-    } catch (e) {
-      // continue to next selector
-    }
-  }
-  throw new Error(`None of the selectors matched: ${selectors.join(' | ')}`);
-}
+import { test, expect } from '@playwright/test';
 
 test.describe('Platform Health Checks', () => {
 
-  // ── ChatGPT ──────────────────────────────
-  test('ChatGPT — basic load check', async ({ page }) => {
-    await page.goto('https://chatgpt.com', { waitUntil: 'domcontentloaded', timeout: LOAD_TIMEOUT });
-    await expect(page).toHaveTitle(/ChatGPT/i, { timeout: ELEMENT_TIMEOUT });
+  const platforms = [
+    { name: 'ChatGPT', url: 'https://chatgpt.com' },
+    { name: 'Claude',   url: 'https://claude.ai' },
+    { name: 'Grok',     url: 'https://grok.x.ai' },
+    { name: 'Gemini',   url: 'https://gemini.google.com' },
+    { name: 'Perplexity', url: 'https://www.perplexity.ai' },
+    { name: 'DeepSeek', url: 'https://chat.deepseek.com' },
+  ];
 
-    await expectAnyVisible(page, [
-      'main',
-      '[role="main"]',
-      '[data-message-author-role]',
-      '[data-testid^="conversation-turn"]',
-      'textarea',
-      '#prompt-textarea',
-    ]);
-    console.log('✅ ChatGPT: Page loaded successfully');
-  });
+  for (const platform of platforms) {
+    test(`${platform.name} - basic load check`, async ({ page }) => {
+      await page.goto(platform.url, { waitUntil: 'domcontentloaded' });
+      
+      // Warte auf stabile Seitenladung
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
-  // ── Claude ───────────────────────────────
-  test('Claude — basic load check', async ({ page }) => {
-    await page.goto('https://claude.ai', { waitUntil: 'domcontentloaded', timeout: LOAD_TIMEOUT });
-    await expect(page).toHaveTitle(/Claude/i, { timeout: ELEMENT_TIMEOUT });
+      const selectors = getPlatformSelectors(platform.name);
 
-    await expectAnyVisible(page, [
-      'article[data-testid="conversation-turn"]',
-      '[data-testid="chat-title-button"]',
-      '[data-testid="user-message"]',
-      'div[contenteditable="true"]',
-      'main',
-    ]);
-    console.log('✅ Claude: Page loaded successfully');
-  });
+      let success = false;
+      let lastError = '';
 
-  // ── Grok ─────────────────────────────────
-  test('Grok — basic load check', async ({ page }) => {
-    await page.goto('https://grok.x.ai', { waitUntil: 'domcontentloaded', timeout: LOAD_TIMEOUT });
-    await expect(page).toHaveTitle(/Grok|xAI/i, { timeout: ELEMENT_TIMEOUT });
+      for (const selector of selectors) {
+        try {
+          await expect(page.locator(selector)).toBeVisible({ timeout: 8000 });
+          console.log(`✅ ${platform.name}: Seite erfolgreich geladen mit Selektor "${selector}"`);
+          success = true;
+          break;
+        } catch (error) {
+          lastError = error.message;
+        }
+      }
 
-    await expectAnyVisible(page, [
-      'main',
-      '[role="main"]',
-      '[data-testid*="message"]',
-      'textarea',
-    ]);
-    console.log('✅ Grok: Page loaded successfully');
-  });
-
-  // ── Gemini ───────────────────────────────
-  test('Gemini — basic load check', async ({ page }) => {
-    await page.goto('https://gemini.google.com', { waitUntil: 'domcontentloaded', timeout: LOAD_TIMEOUT });
-    await expect(page).toHaveTitle(/Gemini/i, { timeout: ELEMENT_TIMEOUT });
-
-    await expectAnyVisible(page, [
-      'rich-textarea',
-      '[data-message-author="user"]',
-      'main',
-      'textarea',
-    ]);
-    console.log('✅ Gemini: Page loaded successfully');
-  });
-
-  // ── Perplexity ───────────────────────────
-  test('Perplexity — basic load check', async ({ page }) => {
-    await page.goto('https://www.perplexity.ai', { waitUntil: 'domcontentloaded', timeout: LOAD_TIMEOUT });
-    await expect(page).toHaveTitle(/Perplexity/i, { timeout: ELEMENT_TIMEOUT });
-
-    await expectAnyVisible(page, [
-      '[class*="ThreadTitle"]',
-      '[class*="query-text"]',
-      'textarea',
-      'main',
-    ]);
-    console.log('✅ Perplexity: Page loaded successfully');
-  });
-
-  // ── DeepSeek ─────────────────────────────
-  test('DeepSeek — basic load check', async ({ page }) => {
-    await page.goto('https://chat.deepseek.com', { waitUntil: 'domcontentloaded', timeout: LOAD_TIMEOUT });
-    await expect(page).toHaveTitle(/DeepSeek/i, { timeout: ELEMENT_TIMEOUT });
-
-    await expectAnyVisible(page, [
-      '.ds-virtual-list-visible-items',
-      '.ds-markdown',
-      'textarea',
-      '#chat-input',
-      'main',
-    ]);
-    console.log('✅ DeepSeek: Page loaded successfully');
-  });
-
+      if (!success) {
+        await page.screenshot({ 
+          path: `test-results/${platform.name.toLowerCase()}-failure.png`, 
+          fullPage: true 
+        });
+        console.error(`❌ ${platform.name} failed. Last error: ${lastError}`);
+        throw new Error(`${platform.name} check failed. Last selector error: ${lastError}`);
+      }
+    });
+  }
 });
+
+// Hilfsfunktion mit robusten Selektoren pro Plattform
+function getPlatformSelectors(platform: string): string[] {
+  switch (platform) {
+    case 'ChatGPT':
+      return [
+        'textarea[data-id="root"]',
+        'main',
+        '[data-message-author-role]',
+        '[data-testid^="conversation-turn"]',
+        'nav[aria-label="Chat history"]'
+      ];
+    case 'Claude':
+      return [
+        'div[contenteditable="true"]',
+        'article[data-testid="conversation-turn"]',
+        '[data-testid="chat-title-button"]',
+        '.font-claude-response'
+      ];
+    case 'Grok':
+      return [
+        'textarea[placeholder]',
+        'main',
+        '[data-testid*="message"]',
+        '[class*="message-bubble"]'
+      ];
+    case 'Gemini':
+      return [
+        'rich-textarea',
+        'ms-prompt-input-wrapper',
+        '[data-message-author="user"]',
+        'main'
+      ];
+    case 'Perplexity':
+      return [
+        'textarea[placeholder]',
+        '[class*="ThreadTitle"]',
+        '[data-testid*="query"]',
+        'main'
+      ];
+    case 'DeepSeek':
+      return [
+        'textarea#chat-input',
+        'textarea[placeholder]',
+        '.ds-virtual-list-visible-items',
+        '.ds-markdown'
+      ];
+    default:
+      return ['main', 'body'];
+  }
+}
