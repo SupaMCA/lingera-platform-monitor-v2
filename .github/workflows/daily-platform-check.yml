@@ -25,6 +25,16 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # Pre-flight Check: Frühes Erkennen von CI-Netzwerkproblemen
+      - name: Pre-flight connectivity check
+        run: |
+          echo "🔍 Running pre-flight connectivity check..."
+          if ! curl -sf --max-time 15 https://www.google.com > /dev/null; then
+            echo "::error::Runner has no internet connectivity - skipping platform tests"
+            exit 78
+          fi
+          echo "✅ Runner has internet connectivity"
+
       - name: Run platform checks
         id: test
         continue-on-error: true
@@ -34,7 +44,7 @@ jobs:
           EXIT_CODE=$?
           echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
           echo "error_output<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUT" | tail -30 >> $GITHUB_OUTPUT
+          echo "$OUTPUT" | tail -40 >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
           exit $EXIT_CODE
 
@@ -52,14 +62,8 @@ jobs:
           MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
           ERROR_OUTPUT: ${{ steps.test.outputs.error_output }}
         run: |
-          # ============================================
-          # Improved Error Extraction & Categorization
-          # ============================================
+          CLEAN_ERROR=$(echo "$ERROR_OUTPUT" | tail -25 | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 900)
 
-          # Clean and limit the error message (last 20 lines, cleaned)
-          CLEAN_ERROR=$(echo "$ERROR_OUTPUT" | tail -20 | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 900)
-
-          # Error Categorization based on real Playwright output
           if echo "$ERROR_OUTPUT" | grep -qiE "timeout|exceeded"; then
             CATEGORY="timeout"
           elif echo "$ERROR_OUTPUT" | grep -qiE "selector|locator.*not found|unable to locate"; then
