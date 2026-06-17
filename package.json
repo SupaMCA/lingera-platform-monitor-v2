@@ -1,12 +1,11 @@
 {
-  "name": "lingera-platform-monitor",
+  "name": "lingera-platform-monitor-v2",
   "version": "1.0.0",
-  "description": "Daily health check for lingera.ai platforms",
-  "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.52.0"
+    "@playwright/test": "^1.45.0"
   }
 }
