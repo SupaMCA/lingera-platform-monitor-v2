@@ -25,7 +25,7 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # Pre-flight Check: Frühes Erkennen von CI-Netzwerkproblemen
+      # Pre-flight Check: Early detection of CI network issues
       - name: Pre-flight connectivity check
         run: |
           echo "🔍 Running pre-flight connectivity check..."
@@ -40,12 +40,16 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          OUTPUT=$(npx playwright test 2>&1)
-          EXIT_CODE=$?
+          npx playwright test 2>&1 | tee test-output.log
+          EXIT_CODE=${PIPESTATUS[0]}
           echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
-          echo "error_output<<EOF" >> $GITHUB_OUTPUT
-          echo "$OUTPUT" | tail -40 >> $GITHUB_OUTPUT
+          
+          # Extract error summary from output
+          SUMMARY=$(tail -40 test-output.log | head -c 900)
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          echo "$SUMMARY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+          
           exit $EXIT_CODE
 
       - name: Upload artifacts on failure
@@ -56,37 +60,62 @@ jobs:
           path: test-results/**
           retention-days: 14
 
-      - name: Notify Abacus Monitor on failure
-        if: steps.test.outcome == 'failure'
+      # Send per-platform results to Lingera webhook (always, success or failure)
+      - name: Report to Lingera Monitor
+        if: always()
         env:
           MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
-          ERROR_OUTPUT: ${{ steps.test.outputs.error_output }}
+          MONITOR_WEBHOOK_SECRET: ${{ secrets.MONITOR_WEBHOOK_SECRET }}
         run: |
-          CLEAN_ERROR=$(echo "$ERROR_OUTPUT" | tail -25 | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 900)
+          RESULTS_FILE="test-results/platform-results.json"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_ID="${{ github.run_id }}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-          if echo "$ERROR_OUTPUT" | grep -qiE "timeout|exceeded"; then
-            CATEGORY="timeout"
-          elif echo "$ERROR_OUTPUT" | grep -qiE "selector|locator.*not found|unable to locate"; then
-            CATEGORY="selector_not_found"
-          elif echo "$ERROR_OUTPUT" | grep -qiE "net::ERR|ECONNREFUSED|network|connection refused"; then
-            CATEGORY="network_error"
-          elif echo "$ERROR_OUTPUT" | grep -qiE "login|sign.?in|auth|redirect.*login"; then
-            CATEGORY="login_wall"
+          if [ -f "$RESULTS_FILE" ]; then
+            echo "📊 Sending per-platform results to Lingera..."
+            
+            # Build batch payload from the JSON results file
+            PAYLOAD=$(jq -c --arg run_url "$RUN_URL" --arg run_id "$RUN_ID" --arg ts "$TIMESTAMP" \
+              '{ results: ., run_url: $run_url, run_id: $run_id, timestamp: $ts }' "$RESULTS_FILE")
+            
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST "$MONITOR_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $MONITOR_WEBHOOK_SECRET" \
+              -d "$PAYLOAD")
+            
+            echo "📤 Webhook response: HTTP $HTTP_CODE"
+            
+            if [ "$HTTP_CODE" != "200" ]; then
+              echo "::warning::Webhook returned HTTP $HTTP_CODE"
+            fi
           else
-            CATEGORY="unknown"
+            echo "⚠️ No results file found - sending fallback failure report"
+            
+            # Fallback: report all platforms as failed (test suite itself crashed)
+            PLATFORMS=("chatgpt" "claude" "grok" "gemini" "perplexity" "deepseek")
+            RESULTS="[]"
+            for p in "${PLATFORMS[@]}"; do
+              RESULTS=$(echo "$RESULTS" | jq -c \
+                --arg p "$p" \
+                --arg msg "Test suite crashed before completing checks" \
+                '. + [{ "platform": $p, "status": "failed", "error_message": $msg, "error_category": "unknown", "response_time_ms": 0 }]')
+            done
+            
+            PAYLOAD=$(echo "$RESULTS" | jq -c \
+              --arg run_url "$RUN_URL" --arg run_id "$RUN_ID" --arg ts "$TIMESTAMP" \
+              '{ results: ., run_url: $run_url, run_id: $run_id, timestamp: $ts }')
+            
+            curl -s -X POST "$MONITOR_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $MONITOR_WEBHOOK_SECRET" \
+              -d "$PAYLOAD"
+            
+            echo "📤 Fallback report sent"
           fi
-
-          curl -s -X POST "$MONITOR_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d @- <<EOF
-          {
-            "platform": "multiple",
-            "error_message": "$CLEAN_ERROR",
-            "error_category": "$CATEGORY",
-            "screenshot_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-            "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          }
-          EOF
-
-          echo "📤 Abacus Monitor alert sent (category: $CATEGORY)"
+          
+          echo "\n📋 Results summary:"
+          if [ -f "$RESULTS_FILE" ]; then
+            cat "$RESULTS_FILE" | jq -r '.[] | "  " + (if .status == "ok" then "✅" else "❌" end) + " " + .platform + " (" + (.response_time_ms | tostring) + "ms)"'
+          fi
