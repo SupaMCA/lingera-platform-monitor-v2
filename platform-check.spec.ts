@@ -1,11 +1,13 @@
 import { test, expect, Page } from '@playwright/test';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
- * Lingera Platform Health Checks v2
+ * Lingera Platform Health Checks v2.1
  * - Login-wall detection (prevents false positives)
  * - Per-platform granular reporting
  * - Response time measurement
- * - Structured JSON output for webhook
+ * - Individual result files per test (survives Playwright retries)
  */
 
 interface PlatformResult {
@@ -16,7 +18,16 @@ interface PlatformResult {
   response_time_ms: number;
 }
 
-const results: PlatformResult[] = [];
+const RESULTS_DIR = path.join(process.cwd(), 'test-results');
+
+// Write each result individually so retries don't overwrite other platforms
+function writeResult(result: PlatformResult) {
+  fs.mkdirSync(RESULTS_DIR, { recursive: true });
+  fs.writeFileSync(
+    path.join(RESULTS_DIR, `${result.platform}-result.json`),
+    JSON.stringify(result, null, 2)
+  );
+}
 
 // ── Login wall indicators (shared across platforms) ──
 const LOGIN_WALL_PATTERNS = [
@@ -58,9 +69,7 @@ async function detectLoginWall(page: Page, platformName: string): Promise<boolea
     const loginHits = LOGIN_WALL_PATTERNS.filter(p => p.test(bodyText));
 
     // Need at least 2 login indicators to avoid false positives
-    // (a single "Log in" in a navbar doesn't mean it's a login wall)
     if (loginHits.length >= 2) {
-      // But also check: is there a visible chat input? If yes, it's not a wall.
       const hasChatInput = await page.locator('textarea, [contenteditable="true"], rich-textarea').first().isVisible({ timeout: 2000 }).catch(() => false);
       if (!hasChatInput) {
         console.warn(`⚠️ ${platformName}: Login wall detected (${loginHits.length} indicators, no chat input)`);
@@ -88,8 +97,6 @@ test.describe('Platform Health Checks', () => {
   for (const platform of platforms) {
     test(`${platform.name} - health check`, async ({ page }) => {
       const startTime = Date.now();
-      let errorCategory: string | undefined;
-      let errorMessage: string | undefined;
 
       try {
         console.log(`🚀 Checking ${platform.name} (${platform.url})...`);
@@ -137,27 +144,30 @@ test.describe('Platform Health Checks', () => {
           );
         }
 
-        // Success
-        results.push({
+        // Success – write individual result file
+        const result: PlatformResult = {
           platform: platform.name.toLowerCase(),
           status: 'ok',
           response_time_ms: Date.now() - startTime,
-        });
+        };
+        writeResult(result);
+        console.log(`📝 Result saved: ${platform.name} = ok`);
 
       } catch (e: any) {
         const elapsed = Date.now() - startTime;
-        errorCategory = e.category || categorizeError(e.message || '');
-        errorMessage = (e.message || 'Unknown error').slice(0, 500);
+        const errorCategory = e.category || categorizeError(e.message || '');
+        const errorMessage = (e.message || 'Unknown error').slice(0, 500);
 
-        results.push({
+        // Failure – write individual result file
+        const result: PlatformResult = {
           platform: platform.name.toLowerCase(),
           status: 'failed',
           error_message: errorMessage,
           error_category: errorCategory,
           response_time_ms: elapsed,
-        });
-
-        console.error(`❌ ${platform.name} failed [${errorCategory}]: ${errorMessage}`);
+        };
+        writeResult(result);
+        console.log(`📝 Result saved: ${platform.name} = failed [${errorCategory}]`);
 
         // Safe screenshot
         try {
@@ -174,18 +184,26 @@ test.describe('Platform Health Checks', () => {
     });
   }
 
-  // After all tests, write the results JSON for the workflow to pick up
+  // After all tests: merge individual results into one file for the workflow
   test.afterAll(async () => {
-    const fs = await import('fs');
-    const path = await import('path');
-    const outDir = path.join(process.cwd(), 'test-results');
-    fs.mkdirSync(outDir, { recursive: true });
+    const files = fs.readdirSync(RESULTS_DIR).filter(f => f.endsWith('-result.json'));
+    const merged: PlatformResult[] = [];
+
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(path.join(RESULTS_DIR, file), 'utf-8');
+        merged.push(JSON.parse(content));
+      } catch {
+        console.warn(`⚠️ Could not read ${file}`);
+      }
+    }
+
     fs.writeFileSync(
-      path.join(outDir, 'platform-results.json'),
-      JSON.stringify(results, null, 2)
+      path.join(RESULTS_DIR, 'platform-results.json'),
+      JSON.stringify(merged, null, 2)
     );
-    console.log(`\n📊 Results written to test-results/platform-results.json`);
-    console.log(JSON.stringify(results, null, 2));
+    console.log(`\n📊 Merged ${merged.length} results into platform-results.json`);
+    console.log(JSON.stringify(merged, null, 2));
   });
 });
 
@@ -194,40 +212,40 @@ function getPlatformSelectors(platform: string): string[] {
   switch (platform) {
     case 'ChatGPT':
       return [
-        'textarea[data-id="root"]',          // Chat input
-        '#prompt-textarea',                    // Alternative chat input
-        '[data-message-author-role]',          // Message in conversation
-        'nav[aria-label="Chat history"]',     // Sidebar
+        'textarea[data-id="root"]',
+        '#prompt-textarea',
+        '[data-message-author-role]',
+        'nav[aria-label="Chat history"]',
       ];
     case 'Claude':
       return [
-        'div[contenteditable="true"]',                    // Chat input
-        'fieldset div[contenteditable="true"]',           // Chat input wrapper
-        'article[data-testid="conversation-turn"]',      // Conversation turn
+        'div[contenteditable="true"]',
+        'fieldset div[contenteditable="true"]',
+        'article[data-testid="conversation-turn"]',
       ];
     case 'Grok':
       return [
-        'textarea[placeholder]',   // Chat input
-        '[data-testid="grok"]',   // Grok-specific container
-        'form textarea',           // Form with textarea
+        'textarea[placeholder]',
+        '[data-testid="grok"]',
+        'form textarea',
       ];
     case 'Gemini':
       return [
-        'rich-textarea',                    // Gemini-specific custom element
-        '.ql-editor[contenteditable]',     // Rich text editor
-        'bard-sidenav',                    // Gemini sidenav component
+        'rich-textarea',
+        '.ql-editor[contenteditable]',
+        'bard-sidenav',
       ];
     case 'Perplexity':
       return [
-        'textarea[placeholder]',             // Chat input
-        'textarea[autofocus]',               // Auto-focused input
-        '[data-testid="search-input"]',     // Search input
+        'textarea[placeholder]',
+        'textarea[autofocus]',
+        '[data-testid="search-input"]',
       ];
     case 'DeepSeek':
       return [
-        'textarea#chat-input',       // Primary chat input
-        'textarea[placeholder]',     // Fallback textarea
-        '#ds-chat-input',           // Alternative ID
+        'textarea#chat-input',
+        'textarea[placeholder]',
+        '#ds-chat-input',
       ];
     default:
       return [];
