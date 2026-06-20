@@ -3,17 +3,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Lingera Platform Health Checks v3.0
+ * Lingera Platform Health Checks v3.1
  * 
- * Changes from v2.1:
- * - Grok URL updated: grok.x.ai → grok.com
- * - Tiered detection: Cloudflare → Login Wall → Chat Input
- * - login_wall and cloudflare are EXPECTED states (test passes, no retry waste)
- * - Only selector_not_found and network_error cause test failure
- * - Updated selectors for all 6 platforms based on June 2026 inspection
- * - Improved Cloudflare Turnstile detection
- * - Login URL pattern covers /sign_in (DeepSeek)
- * - Per-platform result files survive Playwright retries (v2.1 fix retained)
+ * Changes from v3.0:
+ * - ChatGPT: #prompt-textarea is now a div[contenteditable] ProseMirror input,
+ *   NOT a <textarea>. Updated selectors to target the visible div.
+ * - DeepSeek: Improved login wall detection with explicit URL wait and
+ *   broader login page selectors. Added "Forgot password" and "Phone number"
+ *   to login indicators.
+ * - Added small delay after networkidle to catch JS-triggered redirects
+ * - Login wall detection now checks for password inputs as strong signal
  */
 
 interface PlatformResult {
@@ -38,7 +37,6 @@ function writeResult(result: PlatformResult) {
 // ── Cloudflare detection ──
 async function detectCloudflare(page: Page): Promise<boolean> {
   try {
-    // Check for Cloudflare challenge page indicators
     const bodyText = await page.locator('body').innerText({ timeout: 3000 });
     const cfIndicators = [
       /performing security verification/i,
@@ -50,11 +48,11 @@ async function detectCloudflare(page: Page): Promise<boolean> {
     const hits = cfIndicators.filter(p => p.test(bodyText));
     if (hits.length >= 2) return true;
 
-    // Check for Turnstile iframe
+    // Turnstile iframe
     const hasTurnstile = await page.locator('iframe[src*="challenges.cloudflare.com"]').count();
     if (hasTurnstile > 0) return true;
 
-    // Check for cf-turnstile widget
+    // cf-turnstile widget
     const hasCfWidget = await page.locator('.cf-turnstile, #cf-turnstile-container, [data-sitekey]').count();
     if (hasCfWidget > 0) return true;
   } catch {
@@ -78,6 +76,8 @@ const LOGIN_WALL_PATTERNS = [
   /SSO/,
   /log in with google/i,
   /login with apple/i,
+  /forgot.?password/i,
+  /phone number/i,
 ];
 
 const LOGIN_URL_PATTERNS = [
@@ -99,6 +99,17 @@ async function detectLoginWall(page: Page, platformName: string): Promise<boolea
     }
   }
 
+  // Check for password input (very strong signal for login page)
+  try {
+    const hasPasswordInput = await page.locator('input[type="password"]').count();
+    if (hasPasswordInput > 0) {
+      console.log(`🔒 ${platformName}: Password input found — login page`);
+      return true;
+    }
+  } catch {
+    // Ignore
+  }
+
   // Check page content for login indicators
   try {
     const bodyText = await page.locator('body').innerText({ timeout: 5000 });
@@ -108,7 +119,7 @@ async function detectLoginWall(page: Page, platformName: string): Promise<boolea
     if (loginHits.length >= 2) {
       // Verify no chat input is present (would mean user IS logged in)
       const hasChatInput = await page.locator(
-        'textarea, [contenteditable="true"][role="textbox"], rich-textarea'
+        'textarea:visible, div[contenteditable="true"][role="textbox"]:visible, rich-textarea:visible'
       ).first().isVisible({ timeout: 2000 }).catch(() => false);
 
       if (!hasChatInput) {
@@ -128,7 +139,6 @@ function getLoginPageSelectors(platform: string): string[] {
   switch (platform) {
     case 'ChatGPT':
       return [
-        // ChatGPT sometimes shows login, sometimes shows chat
         'button:has-text("Log in")',
         'button:has-text("Sign up")',
       ];
@@ -140,9 +150,11 @@ function getLoginPageSelectors(platform: string): string[] {
       ];
     case 'DeepSeek':
       return [
-        'input[placeholder*="Phone number" i]',
+        'input[placeholder*="Phone" i]',
         'input[placeholder*="email" i]',
+        'input[type="password"]',
         '.ds-input__input',
+        'button:has-text("Log in")',
       ];
     case 'Grok':
       return [
@@ -168,10 +180,11 @@ function getChatSelectors(platform: string): string[] {
   switch (platform) {
     case 'ChatGPT':
       return [
-        '#prompt-textarea',                         // main composer (id)
-        'textarea[name="prompt-textarea"]',          // by name attribute
-        'textarea[placeholder="Ask anything"]',      // by placeholder
-        'nav[aria-label="Chat history"]',            // sidebar
+        // June 2026: ChatGPT uses a ProseMirror contenteditable div, NOT a textarea
+        'div#prompt-textarea',                       // primary: contenteditable div with id
+        'div.ProseMirror[contenteditable="true"]',   // ProseMirror class
+        'div[contenteditable="true"][role="textbox"]', // generic contenteditable textbox
+        'nav[aria-label="Chat history"]',            // sidebar (fallback proof of life)
       ];
     case 'Claude':
       return [
@@ -213,7 +226,7 @@ test.describe('Platform Health Checks', () => {
   const platforms = [
     { name: 'ChatGPT',    url: 'https://chatgpt.com' },
     { name: 'Claude',     url: 'https://claude.ai' },
-    { name: 'Grok',       url: 'https://grok.com' },          // Updated from grok.x.ai
+    { name: 'Grok',       url: 'https://grok.com' },
     { name: 'Gemini',     url: 'https://gemini.google.com' },
     { name: 'Perplexity', url: 'https://www.perplexity.ai' },
     { name: 'DeepSeek',   url: 'https://chat.deepseek.com' },
@@ -238,6 +251,12 @@ test.describe('Platform Health Checks', () => {
 
         // Wait for page to settle
         await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+
+        // Extra wait for JS-triggered redirects (DeepSeek redirects via JS)
+        await page.waitForTimeout(2000);
+
+        // Log final URL for debugging
+        console.log(`📍 ${platform.name}: Final URL = ${page.url()}`);
 
         // ── TIER 1: Cloudflare detection ──
         const isCloudflare = await detectCloudflare(page);
