@@ -48,6 +48,8 @@ GitHub schaltet geplante Workflows in einem öffentlichen Repo nach 60 Tagen ohn
 
 `Keep scheduled workflows active` (`.github/workflows/keepalive.yml`) läuft montags und donnerstags. Es schaltet Workflows mit Status `disabled_inactivity` wieder an und erzeugt erst nach 30 Tagen ohne Commit einen Keepalive-Commit. Manuell abgeschaltete Workflows lässt es aus.
 
+Der Check läuft täglich um 09:00 UTC, über „Run workflow“, und zusätzlich bei einem Push auf `main`, der die Check-Dateien selbst ändert. Der Keepalive-Commit löst ihn nicht aus. Der API-Token kann `workflow_dispatch` nicht aufrufen (HTTP 403).
+
 Der Token dieses Repos konnte den alten Workflow `daily-platform-check.yml` (id 282900092, Status `disabled_inactivity`) nicht einschalten (HTTP 403). Der Check liegt deshalb in der neuen Datei `platform-health.yml`. Eine neue Workflow-Datei startet aktiv; die alte Datei ist entfernt. Der Keepalive schaltet künftige `disabled_inactivity`-Zustände wieder an. Wenn der neue Workflow trotzdem aus ist: Actions → Daily Platform Health Check → **Enable workflow**.
 
 ## Lokal
