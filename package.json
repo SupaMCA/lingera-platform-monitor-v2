@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:unit": "playwright test health.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.45.0"

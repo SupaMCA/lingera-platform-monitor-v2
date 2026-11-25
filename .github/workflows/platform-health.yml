@@ -1,0 +1,107 @@
+name: Daily Platform Health Check
+
+on:
+  schedule:
+    # 09:00 UTC every day. GitHub may delay scheduled runs by a few minutes.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-platforms:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Pre-flight connectivity check
+        run: |
+          echo "Running pre-flight connectivity check..."
+          if ! curl -sf --max-time 15 https://www.google.com > /dev/null; then
+            echo "::error::Runner has no internet connectivity"
+            exit 1
+          fi
+          echo "Runner has internet connectivity"
+
+      - name: Prepare optional ChatGPT login
+        env:
+          CHATGPT_STORAGE_STATE: ${{ secrets.CHATGPT_STORAGE_STATE }}
+        run: |
+          if [ -n "${CHATGPT_STORAGE_STATE}" ]; then
+            umask 077
+            printf '%s' "$CHATGPT_STORAGE_STATE" > "$RUNNER_TEMP/chatgpt-storage.json"
+            echo "CHATGPT_STORAGE_STATE_PATH=$RUNNER_TEMP/chatgpt-storage.json" >> "$GITHUB_ENV"
+            echo "ChatGPT storage state is present. It is used only together with CHATGPT_CONVERSATION_URL."
+          else
+            echo "CHATGPT_STORAGE_STATE is not set. ChatGPT is checked via the public share page."
+          fi
+
+      - name: Run platform checks
+        id: test
+        continue-on-error: true
+        env:
+          CHATGPT_SHARE_URL: ${{ secrets.CHATGPT_SHARE_URL }}
+          CHATGPT_SHARE_URL_VAR: ${{ vars.CHATGPT_SHARE_URL }}
+          CHATGPT_CONVERSATION_URL: ${{ secrets.CHATGPT_CONVERSATION_URL }}
+        run: npx playwright test
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-check-results
+          path: |
+            test-results/**
+            playwright-report/**
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Report to Lingera monitor
+        id: webhook
+        if: always()
+        continue-on-error: true
+        env:
+          MONITOR_WEBHOOK_URL: ${{ secrets.MONITOR_WEBHOOK_URL }}
+          MONITOR_WEBHOOK_SECRET: ${{ secrets.MONITOR_WEBHOOK_SECRET }}
+        run: bash scripts/post-webhook.sh
+
+      - name: Merge verdict
+        if: always()
+        run: bash scripts/merge-verdict.sh
+
+      - name: Open or resolve the alert issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/github-alert.sh
+
+      - name: Fail the job when the check is unhealthy
+        if: always()
+        run: |
+          if [[ ! -f test-results/verdict.json ]]; then
+            echo "::error::nicht geprüft / not checked: verdict file is missing"
+            exit 1
+          fi
+          if jq -e '.ok == true' test-results/verdict.json >/dev/null; then
+            echo "Health check passed."
+            exit 0
+          fi
+          echo "::error::Platform health check failed. See the job summary and the platform-health issue."
+          jq -r '.reasons[]' test-results/verdict.json
+          exit 1
