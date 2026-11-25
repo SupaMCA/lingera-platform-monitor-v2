@@ -5,6 +5,20 @@ on:
     # 09:00 UTC every day. GitHub may delay scheduled runs by a few minutes.
     - cron: "0 9 * * *"
   workflow_dispatch:
+  # A push that changes the check itself also runs it. The agent token cannot
+  # call workflow_dispatch (HTTP 403). Keepalive commits do not match these paths.
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/platform-health.yml"
+      - "src/**"
+      - "scripts/**"
+      - "platform-check.spec.ts"
+      - "health.spec.ts"
+      - "playwright.config.ts"
+      - "package.json"
+      - "package-lock.json"
 
 permissions:
   contents: read
