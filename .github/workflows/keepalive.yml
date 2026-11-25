@@ -1,0 +1,77 @@
+name: Keep scheduled workflows active
+
+# GitHub disables scheduled workflows in a public repository after 60 days
+# without repository activity. Workflow runs do not count as activity; commits do.
+# This workflow is a separate file so it is enabled when it first lands on main,
+# and from there it re-enables the daily check if GitHub has set
+# disabled_inactivity. A commit is created only after 30 quiet days.
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+    - cron: "17 4 * * 4"
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Re-enable workflows disabled for inactivity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows" \
+            --jq '.workflows[] | [.path, .state] | @tsv' |
+          while IFS="$(printf '\t')" read -r path state; do
+            [ -n "$path" ] || continue
+            name="$(basename "$path")"
+            case "$state" in
+              disabled_inactivity)
+                echo "Enabling ${name} (was disabled_inactivity)"
+                gh api --method PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/${name}/enable"
+                ;;
+              disabled_manually)
+                echo "Leaving ${name} disabled_manually"
+                ;;
+              *)
+                echo "${name} is ${state}"
+                ;;
+            esac
+          done
+
+      - name: Checkout default branch
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+
+      - name: Commit activity if the repository has been quiet
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          LAST="$(git log -1 --format=%ct)"
+          NOW="$(date +%s)"
+          AGE_DAYS="$(( (NOW - LAST) / 86400 ))"
+          echo "Last commit is ${AGE_DAYS} days old."
+          if [ "$AGE_DAYS" -lt 30 ]; then
+            echo "Recent repository activity. No keepalive commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p .github
+          date -u +%Y-%m-%dT%H:%M:%SZ > .github/keepalive-timestamp
+          git add .github/keepalive-timestamp
+          git commit -m "chore: keepalive so scheduled workflows stay enabled [skip ci]"
+          if git push; then
+            echo "Keepalive commit pushed."
+          else
+            echo "::warning::Could not push the keepalive commit. If main is protected, allow the GitHub Actions bot to push, or commit to the repository yourself at least every 60 days."
+          fi
